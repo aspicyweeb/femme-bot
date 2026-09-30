@@ -20,6 +20,18 @@ intents.moderation = True
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 
+@bot.tree.interaction_check
+async def admin_slash_only(interaction: discord.Interaction) -> bool:
+    if interaction.type != discord.InteractionType.application_command:
+        return True
+    if interaction.guild is None or not isinstance(interaction.user, discord.Member):
+        return False
+    if interaction.user.guild_permissions.administrator:
+        return True
+    await interaction.response.send_message("Administrator only.", ephemeral=True)
+    return False
+
+
 @bot.event
 async def on_ready():
     print(f"logged in as {bot.user} ({bot.user.id})")
