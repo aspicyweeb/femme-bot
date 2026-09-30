@@ -1,6 +1,6 @@
 # Your custom server bot
 
-Cogs = features. Roles is live. Drop a new file in `cogs/` later and it loads on boot.
+Cogs = features. Drop a new file in `cogs/` later and it loads on boot.
 
 ## Use
 /quick channel:#roles title:sub roles exclusive:True roles:@owned @unowned @loser
