@@ -51,6 +51,16 @@ class Verify(commands.Cog):
         save(data)
         await interaction.response.send_message("Autorole off.", ephemeral=True)
 
+    @app_commands.command(name="unverifiedset", description="role removed when someone is verified")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def unverifiedset(self, interaction: discord.Interaction, role: discord.Role):
+        data = load()
+        entry = data.get(str(interaction.guild_id), {})
+        entry["unverified"] = role.id
+        data[str(interaction.guild_id)] = entry
+        save(data)
+        await interaction.response.send_message(f"will remove {role.mention} on verify", ephemeral=True)
+
     @app_commands.command(name="verifydommesetup", description="the two roles /verifydomme gives")
     @app_commands.checks.has_permissions(administrator=True)
     async def verify_domme_setup(self, interaction: discord.Interaction, role1: discord.Role, role2: discord.Role):
@@ -103,8 +113,25 @@ class Verify(commands.Cog):
         except discord.Forbidden:
             await interaction.response.send_message("Bot can't assign those roles.", ephemeral=True)
             return
+        drop_ids = [stored.get("unverified"), stored.get("autorole")]
+        drop = []
+        for rid in drop_ids:
+            if not rid:
+                continue
+            r = interaction.guild.get_role(int(rid))
+            if r and r in member.roles and r not in roles:
+                drop.append(r)
+        if drop:
+            try:
+                await member.remove_roles(*drop, reason="removed unverified on verify")
+            except discord.Forbidden:
+                await interaction.response.send_message(
+                    "verified but couldn't remove unverified. move the bot role higher.",
+                    ephemeral=True,
+                )
+                return
         await interaction.response.send_message(
-            f"Verified {member.mention} → " + " ".join(r.mention for r in roles),
+            f"verified {member.mention} → " + " ".join(r.mention for r in roles),
             ephemeral=True,
         )
 
