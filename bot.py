@@ -47,10 +47,13 @@ async def setup_hook():
     for file in cogs_dir.glob("*.py"):
         if file.name.startswith("_"):
             continue
-        if file.stem != "roles":
+        if file.stem in {"lockdown", "tickets"}:
             continue
-        await bot.load_extension(f"cogs.{file.stem}")
-        print(f"loaded cog {file.stem}")
+        try:
+            await bot.load_extension(f"cogs.{file.stem}")
+            print(f"loaded cog {file.stem}")
+        except Exception as e:
+            print(f"FAILED cog {file.stem}:", e)
     for cmd in bot.tree.walk_commands():
         cmd.default_permissions = discord.Permissions(administrator=True)
 
