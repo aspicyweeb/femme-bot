@@ -1,0 +1,68 @@
+import os
+from pathlib import Path
+
+import discord
+from discord.ext import commands
+from dotenv import load_dotenv
+
+load_dotenv()
+
+TOKEN = os.getenv("DISCORD_TOKEN")
+GUILD_ID = os.getenv("GUILD_ID")
+
+intents = discord.Intents.default()
+intents.members = True
+intents.message_content = True
+intents.guilds = True
+intents.reactions = True
+intents.moderation = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+
+@bot.tree.command(name="ping", description="test if the bot answers")
+async def ping(interaction: discord.Interaction):
+    await interaction.response.send_message("pong", ephemeral=True)
+
+
+@bot.event
+async def on_ready():
+    print(f"logged in as {bot.user} ({bot.user.id})")
+    try:
+        # drop leftover global commands (old names like create_sticky / verify_dom)
+        await bot.tree.sync()
+        if GUILD_ID:
+            guild = discord.Object(id=int(GUILD_ID))
+            bot.tree.clear_commands(guild=guild)
+            bot.tree.copy_global_to(guild=guild)
+            synced = await bot.tree.sync(guild=guild)
+        else:
+            synced = await bot.tree.sync()
+        print(f"synced {len(synced)} slash commands")
+        print("commands:", ", ".join(sorted(c.name for c in bot.tree.walk_commands())))
+    except Exception as e:
+        print("slash sync failed:", e)
+    print("cogs:", ", ".join(bot.cogs))
+
+
+@bot.event
+async def setup_hook():
+    cogs_dir = Path(__file__).parent / "cogs"
+    for file in cogs_dir.glob("*.py"):
+        if file.name.startswith("_"):
+            continue
+        if file.stem in {"lockdown", "tickets"}:
+            continue
+        try:
+            await bot.load_extension(f"cogs.{file.stem}")
+            print(f"loaded cog {file.stem}")
+        except Exception as e:
+            print(f"FAILED cog {file.stem}:", e)
+    for cmd in bot.tree.walk_commands():
+        cmd.default_permissions = discord.Permissions(administrator=True)
+
+
+if __name__ == "__main__":
+    if not TOKEN:
+        raise SystemExit("Set DISCORD_TOKEN in .env")
+    bot.run(TOKEN)
