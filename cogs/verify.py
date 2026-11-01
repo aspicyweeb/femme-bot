@@ -1,6 +1,5 @@
 import json
 from pathlib import Path
-
 import discord
 from discord import app_commands
 from discord.ext import commands
@@ -28,6 +27,7 @@ class Verify(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
 
+    # ---------------- Autorole ----------------
     @app_commands.command(name="autoroleset", description="role given to everyone who joins")
     @app_commands.checks.has_permissions(administrator=True)
     async def autorole_set(self, interaction: discord.Interaction, role: discord.Role):
@@ -51,7 +51,8 @@ class Verify(commands.Cog):
         save(data)
         await interaction.response.send_message("Autorole off.", ephemeral=True)
 
-    @app_commands.command(name="unverifiedset", description="role removed when someone is verified")
+    # ---------------- Unverified role ----------------
+    @app_commands.command(name="unverifiedset", description="role removed when someone is verified as 18+")
     @app_commands.checks.has_permissions(administrator=True)
     async def unverifiedset(self, interaction: discord.Interaction, role: discord.Role):
         data = load()
@@ -59,82 +60,95 @@ class Verify(commands.Cog):
         entry["unverified"] = role.id
         data[str(interaction.guild_id)] = entry
         save(data)
-        await interaction.response.send_message(f"will remove {role.mention} on verify", ephemeral=True)
+        await interaction.response.send_message(f"Will remove {role.mention} on /verify18", ephemeral=True)
 
-    @app_commands.command(name="verifydommesetup", description="the two roles /verifydomme gives")
+    # ---------------- Setup ----------------
+    @app_commands.command(name="verify18setup", description="Set the 18+ role")
     @app_commands.checks.has_permissions(administrator=True)
-    async def verify_domme_setup(self, interaction: discord.Interaction, role1: discord.Role, role2: discord.Role):
-        await self.save_pair(interaction, "domme", role1, role2)
-
-    @app_commands.command(name="verifysubsetup", description="the two roles /verifysub gives")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def verify_sub_setup(self, interaction: discord.Interaction, role1: discord.Role, role2: discord.Role):
-        await self.save_pair(interaction, "sub", role1, role2)
-
-    async def save_pair(self, interaction, key: str, role1: discord.Role, role2: discord.Role):
-        for r in (role1, role2):
-            if interaction.guild.me.top_role <= r:
-                await interaction.response.send_message(f"Move the bot role above **{r.name}**.", ephemeral=True)
-                return
+    async def verify18_setup(self, interaction: discord.Interaction, role: discord.Role):
+        if interaction.guild.me.top_role <= role:
+            await interaction.response.send_message("Move the bot role above that role.", ephemeral=True)
+            return
         data = load()
         entry = data.get(str(interaction.guild_id), {})
-        entry[key] = [role1.id, role2.id]
+        entry["role_18"] = role.id
         data[str(interaction.guild_id)] = entry
         save(data)
-        await interaction.response.send_message(
-            f"Saved. /verify_{key} will give {role1.mention} + {role2.mention}",
-            ephemeral=True,
-        )
+        await interaction.response.send_message(f"18+ role set to {role.mention}", ephemeral=True)
 
-    @app_commands.command(name="verifydomme", description="verify a member as domme")
-    @app_commands.describe(member="who you're verifying")
-    async def verify_domme(self, interaction: discord.Interaction, member: discord.Member):
-        await self.give(interaction, member, "domme")
+    @app_commands.command(name="verifycreatorsetup", description="Set the creator role")
+    @app_commands.checks.has_permissions(administrator=True)
+    async def verifycreator_setup(self, interaction: discord.Interaction, role: discord.Role):
+        if interaction.guild.me.top_role <= role:
+            await interaction.response.send_message("Move the bot role above that role.", ephemeral=True)
+            return
+        data = load()
+        entry = data.get(str(interaction.guild_id), {})
+        entry["role_creator"] = role.id
+        data[str(interaction.guild_id)] = entry
+        save(data)
+        await interaction.response.send_message(f"Creator role set to {role.mention}", ephemeral=True)
 
-    @app_commands.command(name="verifysub", description="verify a member as sub")
-    @app_commands.describe(member="who you're verifying")
-    async def verify_sub(self, interaction: discord.Interaction, member: discord.Member):
-        await self.give(interaction, member, "sub")
-
-    async def give(self, interaction, member: discord.Member, key: str):
+    # ---------------- Verify commands ----------------
+    @app_commands.command(name="verify18", description="Verify a member as 18+ (removes unverified role)")
+    @app_commands.describe(member="Member to verify")
+    async def verify18(self, interaction: discord.Interaction, member: discord.Member):
         stored = cfg(interaction.guild_id)
-        ids = stored.get(key)
-        if key == "domme" and not ids:
-            ids = stored.get("dom")
-        if not ids:
-            await interaction.response.send_message("Run the setup command first.", ephemeral=True)
+        role_id = stored.get("role_18")
+        if not role_id:
+            await interaction.response.send_message("Run `/verify18setup` first.", ephemeral=True)
             return
-        roles = [r for r in (interaction.guild.get_role(i) for i in ids) if r]
-        if len(roles) != 2:
-            await interaction.response.send_message("A setup role was deleted. Run setup again.", ephemeral=True)
-            return
-        try:
-            await member.add_roles(*roles, reason=f"verify_{key} by {interaction.user}")
-        except discord.Forbidden:
-            await interaction.response.send_message("Bot can't assign those roles.", ephemeral=True)
-            return
-        drop_ids = [stored.get("unverified"), stored.get("autorole")]
-        drop = []
-        for rid in drop_ids:
-            if not rid:
-                continue
-            r = interaction.guild.get_role(int(rid))
-            if r and r in member.roles and r not in roles:
-                drop.append(r)
-        if drop:
-            try:
-                await member.remove_roles(*drop, reason="removed unverified on verify")
-            except discord.Forbidden:
-                await interaction.response.send_message(
-                    "verified but couldn't remove unverified. move the bot role higher.",
-                    ephemeral=True,
-                )
-                return
-        await interaction.response.send_message(
-            f"verified {member.mention} → " + " ".join(r.mention for r in roles),
-            ephemeral=True,
-        )
 
+        role = interaction.guild.get_role(int(role_id))
+        if not role:
+            await interaction.response.send_message("The 18+ role was deleted. Run setup again.", ephemeral=True)
+            return
+
+        try:
+            await member.add_roles(role, reason=f"verify18 by {interaction.user}")
+        except discord.Forbidden:
+            await interaction.response.send_message("Bot can't assign the 18+ role.", ephemeral=True)
+            return
+
+        # Remove unverified role if set
+        unverified_id = stored.get("unverified")
+        if unverified_id:
+            unverified = interaction.guild.get_role(int(unverified_id))
+            if unverified and unverified in member.roles:
+                try:
+                    await member.remove_roles(unverified, reason="removed unverified on 18+ verify")
+                except discord.Forbidden:
+                    await interaction.response.send_message(
+                        f"Verified {member.mention} as 18+ but couldn't remove the unverified role. Move the bot role higher.",
+                        ephemeral=True,
+                    )
+                    return
+
+        await interaction.response.send_message(f"Verified {member.mention} as 18+.", ephemeral=True)
+
+    @app_commands.command(name="verifycreator", description="Verify a member as creator")
+    @app_commands.describe(member="Member to verify as creator")
+    async def verifycreator(self, interaction: discord.Interaction, member: discord.Member):
+        stored = cfg(interaction.guild_id)
+        role_id = stored.get("role_creator")
+        if not role_id:
+            await interaction.response.send_message("Run `/verifycreatorsetup` first.", ephemeral=True)
+            return
+
+        role = interaction.guild.get_role(int(role_id))
+        if not role:
+            await interaction.response.send_message("The creator role was deleted. Run setup again.", ephemeral=True)
+            return
+
+        try:
+            await member.add_roles(role, reason=f"verifycreator by {interaction.user}")
+        except discord.Forbidden:
+            await interaction.response.send_message("Bot can't assign the creator role.", ephemeral=True)
+            return
+
+        await interaction.response.send_message(f"Gave {member.mention} the creator role.", ephemeral=True)
+
+    # ---------------- Autorole on join ----------------
     @commands.Cog.listener()
     async def on_member_join(self, member: discord.Member):
         rid = cfg(member.guild.id).get("autorole")
