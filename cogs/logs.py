@@ -1,25 +1,16 @@
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-
 import discord
-from discord import app_commands
 from discord.ext import commands
 
-DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "logs.json"
-
+DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "config.json"
 
 def load() -> dict:
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     if DATA_FILE.exists():
         return json.loads(DATA_FILE.read_text(encoding="utf-8"))
     return {}
-
-
-def save(data: dict) -> None:
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DATA_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
 
 class Logs(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -29,7 +20,7 @@ class Logs(commands.Cog):
         if guild is None:
             return None
         data = load()
-        cfg = data.get(str(guild.id), {})
+        cfg = data.get(str(guild.id), {}).get("logs", {})
         cid = cfg.get(kind)
         if not cid:
             return None
@@ -50,47 +41,6 @@ class Logs(commands.Cog):
             await ch.send(embed=embed)
         except discord.Forbidden:
             print("logs: missing send perms")
-
-    @app_commands.command(name="logsmessages", description="channel for deleted/edited messages")
-    @app_commands.describe(channel="where message logs go")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def logs_messages(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        data = load()
-        cfg = data.get(str(interaction.guild_id), {})
-        cfg["messages"] = channel.id
-        data[str(interaction.guild_id)] = cfg
-        save(data)
-        await interaction.response.send_message(f"Message logs → {channel.mention}", ephemeral=True)
-
-    @app_commands.command(name="logsmembers", description="channel for joins, leaves, roles, bans")
-    @app_commands.describe(channel="where member logs go")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def logs_members(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        data = load()
-        cfg = data.get(str(interaction.guild_id), {})
-        cfg["members"] = channel.id
-        data[str(interaction.guild_id)] = cfg
-        save(data)
-        await interaction.response.send_message(f"Member logs → {channel.mention}", ephemeral=True)
-
-    @app_commands.command(name="logsrandom", description="channel for server/channel/role changes")
-    @app_commands.describe(channel="where extra logs go")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def logs_random(self, interaction: discord.Interaction, channel: discord.TextChannel):
-        data = load()
-        cfg = data.get(str(interaction.guild_id), {})
-        cfg["random"] = channel.id
-        data[str(interaction.guild_id)] = cfg
-        save(data)
-        await interaction.response.send_message(f"Random logs → {channel.mention}", ephemeral=True)
-
-    @app_commands.command(name="logsoff", description="stop all logs")
-    @app_commands.checks.has_permissions(administrator=True)
-    async def logs_off(self, interaction: discord.Interaction):
-        data = load()
-        data.pop(str(interaction.guild_id), None)
-        save(data)
-        await interaction.response.send_message("Logs off", ephemeral=True)
 
     @commands.Cog.listener()
     async def on_message_delete(self, message: discord.Message):
@@ -174,7 +124,6 @@ class Logs(commands.Cog):
             0xC9A0FF,
         )
 
-
     @commands.Cog.listener()
     async def on_guild_channel_create(self, channel: discord.abc.GuildChannel):
         await self.send(
@@ -214,7 +163,5 @@ class Logs(commands.Cog):
             return
         await self.send(after, "random", "Server updated", "\n".join(parts), 0xC9A0FF)
 
-
 async def setup(bot: commands.Bot):
     await bot.add_cog(Logs(bot))
-
