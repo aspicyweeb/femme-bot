@@ -1,10 +1,11 @@
+import json
+from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
-import json
-from pathlib import Path
 
 DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "config.json"
+LEADERBOARD_FILE = Path(__file__).resolve().parent.parent / "data" / "leaderboard.json"
 
 def load() -> dict:
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -16,6 +17,16 @@ def save(data: dict) -> None:
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     DATA_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
+def load_lb() -> dict:
+    LEADERBOARD_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if LEADERBOARD_FILE.exists():
+        return json.loads(LEADERBOARD_FILE.read_text(encoding="utf-8"))
+    return {}
+
+def save_lb(data: dict) -> None:
+    LEADERBOARD_FILE.parent.mkdir(parents=True, exist_ok=True)
+    LEADERBOARD_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
 class SetupSelect(discord.ui.Select):
     def __init__(self):
         options = [
@@ -23,6 +34,7 @@ class SetupSelect(discord.ui.Select):
             discord.SelectOption(label="Logging", value="logs", description="Log channels"),
             discord.SelectOption(label="Welcome", value="welcome", description="Welcome messages"),
             discord.SelectOption(label="Verification", value="verify", description="18+ and creator roles"),
+            discord.SelectOption(label="Personal Server", value="personal", description="Private server only settings"),
         ]
         super().__init__(placeholder="What do you want to set up?", options=options)
 
@@ -36,6 +48,8 @@ class SetupSelect(discord.ui.Select):
             await interaction.response.send_modal(WelcomeModal())
         elif choice == "verify":
             await interaction.response.send_modal(VerifyModal())
+        elif choice == "personal":
+            await interaction.response.send_modal(PersonalServerModal())
 
 class SetupView(discord.ui.View):
     def __init__(self):
@@ -111,6 +125,68 @@ class VerifyModal(discord.ui.Modal, title="Verification Setup"):
             verify["creator"] = int(self.creator.value.strip())
         save(data)
         await interaction.response.send_message("Verification roles updated.", ephemeral=True)
+
+class PersonalServerModal(discord.ui.Modal, title="Personal Server"):
+    action = discord.ui.TextInput(
+        label="Action",
+        placeholder="sent / remove / reset / leaderboard",
+        required=True,
+    )
+    user = discord.ui.TextInput(
+        label="User ID (for sent/remove)",
+        placeholder="123456789012345678",
+        required=False,
+    )
+    amount = discord.ui.TextInput(
+        label="Amount (for sent/remove)",
+        placeholder="25.00",
+        required=False,
+    )
+
+    async def on_submit(self, interaction: discord.Interaction):
+        act = self.action.value.strip().lower()
+        guild = str(interaction.guild_id)
+        data = load_lb()
+        data.setdefault(guild, {})
+
+        if act == "leaderboard":
+            entries = data[guild]
+            if not entries:
+                return await interaction.response.send_message("Leaderboard is empty.", ephemeral=True)
+            lines = []
+            for uid, total in sorted(entries.items(), key=lambda x: x[1], reverse=True):
+                lines.append(f"<@{uid}> — ${float(total):.2f}")
+            await interaction.response.send_message("\n".join(lines[:20]), ephemeral=True)
+            return
+
+        if act == "reset":
+            data[guild] = {}
+            save_lb(data)
+            return await interaction.response.send_message("Leaderboard wiped.", ephemeral=True)
+
+        if act not in ("sent", "remove"):
+            return await interaction.response.send_message("Use: sent / remove / reset / leaderboard", ephemeral=True)
+
+        uid = self.user.value.strip()
+        amt_raw = self.amount.value.strip()
+        if not uid or not amt_raw:
+            return await interaction.response.send_message("Need a user ID and amount.", ephemeral=True)
+
+        try:
+            amount = float(amt_raw)
+        except ValueError:
+            return await interaction.response.send_message("Amount must be a number.", ephemeral=True)
+
+        current = float(data[guild].get(uid, 0))
+        if act == "sent":
+            data[guild][uid] = round(current + amount, 2)
+            msg = f"Added ${amount:.2f} to <@{uid}> (now ${data[guild][uid]:.2f})"
+        else:  # remove
+            data[guild][uid] = round(max(0, current - amount), 2)
+            msg = f"Removed ${amount:.2f} from <@{uid}> (now ${data[guild][uid]:.2f})"
+
+        save_lb(data)
+        await interaction.response.send_message(msg, ephemeral=True)
 
 class Setup(commands.Cog):
     def __init__(self, bot):
