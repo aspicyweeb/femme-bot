@@ -5,7 +5,7 @@ from discord import app_commands
 from discord.ext import commands
 
 DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "config.json"
-LEADERBOARD_FILE = Path(__file__).resolve().parent.parent / "data" / "leaderboard.json"
+SENT_FILE = Path(__file__).resolve().parent.parent / "data" / "sent.json"
 
 def load() -> dict:
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
@@ -17,15 +17,21 @@ def save(data: dict) -> None:
     DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
     DATA_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
-def load_lb() -> dict:
-    LEADERBOARD_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if LEADERBOARD_FILE.exists():
-        return json.loads(LEADERBOARD_FILE.read_text(encoding="utf-8"))
+def load_sent() -> dict:
+    SENT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if SENT_FILE.exists():
+        return json.loads(SENT_FILE.read_text(encoding="utf-8"))
     return {}
 
-def save_lb(data: dict) -> None:
-    LEADERBOARD_FILE.parent.mkdir(parents=True, exist_ok=True)
-    LEADERBOARD_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+def save_sent(data: dict) -> None:
+    SENT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    SENT_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+def entry(table: dict, key: str) -> dict:
+    raw = table.get(key, 0)
+    if isinstance(raw, dict):
+        return {"name": raw.get("name") or key, "total": float(raw.get("total") or 0)}
+    return {"name": key, "total": float(raw or 0)}
 
 class SetupSelect(discord.ui.Select):
     def __init__(self):
@@ -133,8 +139,13 @@ class PersonalServerModal(discord.ui.Modal, title="Personal Server"):
         required=True,
     )
     user = discord.ui.TextInput(
-        label="User ID (for sent/remove)",
+        label="User ID (optional)",
         placeholder="123456789012345678",
+        required=False,
+    )
+    name = discord.ui.TextInput(
+        label="Name (if not on Discord)",
+        placeholder="their name",
         required=False,
     )
     amount = discord.ui.TextInput(
@@ -146,46 +157,70 @@ class PersonalServerModal(discord.ui.Modal, title="Personal Server"):
     async def on_submit(self, interaction: discord.Interaction):
         act = self.action.value.strip().lower()
         guild = str(interaction.guild_id)
-        data = load_lb()
-        data.setdefault(guild, {})
+        data = load_sent()
+        table = data.setdefault(guild, {})
 
         if act == "leaderboard":
-            entries = data[guild]
-            if not entries:
-                return await interaction.response.send_message("Leaderboard is empty.", ephemeral=True)
+            if not table:
+                return await interaction.response.send_message("empty.", ephemeral=True)
+            rows = []
+            for key, raw in table.items():
+                item = entry(table, key)
+                rows.append((key, item["name"], item["total"]))
+            rows.sort(key=lambda r: r[2], reverse=True)
             lines = []
-            for uid, total in sorted(entries.items(), key=lambda x: x[1], reverse=True):
-                lines.append(f"<@{uid}> — ${float(total):.2f}")
-            await interaction.response.send_message("\n".join(lines[:20]), ephemeral=True)
+            for i, (key, saved_name, total) in enumerate(rows[:25], start=1):
+                if key.isdigit():
+                    shown = f"<@{key}>"
+                else:
+                    shown = saved_name
+                lines.append(f"**{i}.** {shown} — ${total:.2f}")
+            grand = sum(r[2] for r in rows)
+            await interaction.response.send_message(("\n".join(lines) + f"\n\ntotal ${grand:.2f}")[:1900], ephemeral=True)
             return
 
         if act == "reset":
             data[guild] = {}
-            save_lb(data)
-            return await interaction.response.send_message("Leaderboard wiped.", ephemeral=True)
+            save_sent(data)
+            return await interaction.response.send_message("leaderboard wiped.", ephemeral=True)
 
         if act not in ("sent", "remove"):
             return await interaction.response.send_message("Use: sent / remove / reset / leaderboard", ephemeral=True)
 
         uid = self.user.value.strip()
+        name_val = self.name.value.strip()
         amt_raw = self.amount.value.strip()
-        if not uid or not amt_raw:
-            return await interaction.response.send_message("Need a user ID and amount.", ephemeral=True)
+
+        if not uid and not name_val:
+            return await interaction.response.send_message("Need a user ID or a name.", ephemeral=True)
+        if not amt_raw:
+            return await interaction.response.send_message("Need an amount.", ephemeral=True)
 
         try:
             amount = float(amt_raw)
         except ValueError:
             return await interaction.response.send_message("Amount must be a number.", ephemeral=True)
 
-        current = float(data[guild].get(uid, 0))
-        if act == "sent":
-            data[guild][uid] = round(current + amount, 2)
-            msg = f"Added ${amount:.2f} to <@{uid}> (now ${data[guild][uid]:.2f})"
-        else:  # remove
-            data[guild][uid] = round(max(0, current - amount), 2)
-            msg = f"Removed ${amount:.2f} from <@{uid}> (now ${data[guild][uid]:.2f})"
+        key = uid if uid else f"name:{name_val.lower()}"
+        label = f"<@{uid}>" if uid else name_val
+        display_name = name_val if name_val else uid
 
-        save_lb(data)
+        current = entry(table, key)
+        if act == "sent":
+            total = round(current["total"] + amount, 2)
+            table[key] = {"name": display_name, "total": total}
+            msg = f"+${amount:.2f} {label} · total ${total:.2f}"
+        else:  # remove
+            total = round(current["total"] - abs(amount), 2)
+            if total <= 0:
+                table.pop(key, None)
+                total = 0
+            else:
+                table[key] = {"name": current["name"], "total": total}
+            msg = f"-${abs(amount):.2f} {label} · total ${total:.2f}"
+
+        data[guild] = table
+        save_sent(data)
         await interaction.response.send_message(msg, ephemeral=True)
 
 class Setup(commands.Cog):
