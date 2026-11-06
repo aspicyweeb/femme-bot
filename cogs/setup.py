@@ -47,13 +47,13 @@ class SetupSelect(discord.ui.Select):
     async def callback(self, interaction: discord.Interaction):
         choice = self.values[0]
         if choice == "autorole":
-            await interaction.response.send_message("Pick the autorole:", view=AutoroleView(), ephemeral=True)
+            await interaction.response.send_modal(AutoroleModal())
         elif choice == "logs":
             await interaction.response.send_modal(LogsModal())
         elif choice == "welcome":
             await interaction.response.send_modal(WelcomeModal())
         elif choice == "verify":
-            await interaction.response.send_message("Pick the verification roles:", view=VerifyView(), ephemeral=True)
+            await interaction.response.send_modal(VerifyModal())
         elif choice == "personal":
             await interaction.response.send_modal(PersonalServerModal())
 
@@ -62,51 +62,16 @@ class SetupView(discord.ui.View):
         super().__init__(timeout=120)
         self.add_item(SetupSelect())
 
-class AutoroleSelect(discord.ui.RoleSelect):
-    def __init__(self):
-        super().__init__(placeholder="Select the join role", min_values=1, max_values=1)
+class AutoroleModal(discord.ui.Modal, title="Autorole Setup"):
+    role_id = discord.ui.TextInput(label="Role ID", placeholder="123456789012345678", required=True)
 
-    async def callback(self, interaction: discord.Interaction):
-        role = self.values[0]
+    async def on_submit(self, interaction: discord.Interaction):
         data = load()
         guild = str(interaction.guild_id)
         data.setdefault(guild, {})
-        data[guild]["autorole"] = role.id
+        data[guild]["autorole"] = int(self.role_id.value.strip())
         save(data)
-        await interaction.response.send_message(f"Autorole set to {role.mention}", ephemeral=True)
-
-class AutoroleView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=120)
-        self.add_item(AutoroleSelect())
-
-class VerifyView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=180)
-
-    @discord.ui.role_select(placeholder="Unverified role (optional)", min_values=0, max_values=1)
-    async def unverified(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
-        await self._save(interaction, "unverified", select.values)
-
-    @discord.ui.role_select(placeholder="18+ role (optional)", min_values=0, max_values=1)
-    async def verified18(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
-        await self._save(interaction, "18", select.values)
-
-    @discord.ui.role_select(placeholder="Creator role (optional)", min_values=0, max_values=1)
-    async def creator(self, interaction: discord.Interaction, select: discord.ui.RoleSelect):
-        await self._save(interaction, "creator", select.values)
-
-    async def _save(self, interaction: discord.Interaction, key: str, roles):
-        data = load()
-        guild = str(interaction.guild_id)
-        data.setdefault(guild, {})
-        verify = data[guild].setdefault("verify", {})
-        if roles:
-            verify[key] = roles[0].id
-        else:
-            verify.pop(key, None)
-        save(data)
-        await interaction.response.send_message(f"Updated {key} role.", ephemeral=True)
+        await interaction.response.send_message("Autorole set.", ephemeral=True)
 
 class LogsModal(discord.ui.Modal, title="Logging Setup"):
     members = discord.ui.TextInput(label="Members log channel ID", placeholder="joins/leaves/roles/bans", required=False)
@@ -147,6 +112,25 @@ class WelcomeModal(discord.ui.Modal, title="Welcome Setup"):
             welcome["image"] = self.image.value.strip()
         save(data)
         await interaction.response.send_message("Welcome settings saved.", ephemeral=True)
+
+class VerifyModal(discord.ui.Modal, title="Verification Setup"):
+    unverified = discord.ui.TextInput(label="Unverified role ID", required=False)
+    verified18 = discord.ui.TextInput(label="18+ role ID", required=False)
+    creator = discord.ui.TextInput(label="Creator role ID", required=False)
+
+    async def on_submit(self, interaction: discord.Interaction):
+        data = load()
+        guild = str(interaction.guild_id)
+        data.setdefault(guild, {})
+        verify = data[guild].setdefault("verify", {})
+        if self.unverified.value.strip():
+            verify["unverified"] = int(self.unverified.value.strip())
+        if self.verified18.value.strip():
+            verify["18"] = int(self.verified18.value.strip())
+        if self.creator.value.strip():
+            verify["creator"] = int(self.creator.value.strip())
+        save(data)
+        await interaction.response.send_message("Verification roles updated.", ephemeral=True)
 
 class PersonalServerModal(discord.ui.Modal, title="Personal Server"):
     action = discord.ui.TextInput(
