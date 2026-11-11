@@ -38,7 +38,6 @@ class SetupSelect(discord.ui.Select):
         options = [
             discord.SelectOption(label="Autorole", value="autorole", description="Role given on join"),
             discord.SelectOption(label="Logging", value="logs", description="Log channels"),
-            discord.SelectOption(label="Welcome", value="welcome", description="Welcome messages"),
             discord.SelectOption(label="Verification", value="verify", description="18+ and creator roles"),
             discord.SelectOption(label="Personal Server", value="personal", description="Private server only settings"),
         ]
@@ -50,8 +49,6 @@ class SetupSelect(discord.ui.Select):
             await interaction.response.send_modal(AutoroleModal())
         elif choice == "logs":
             await interaction.response.send_modal(LogsModal())
-        elif choice == "welcome":
-            await interaction.response.send_modal(WelcomeModal())
         elif choice == "verify":
             await interaction.response.send_modal(VerifyModal())
         elif choice == "personal":
@@ -91,27 +88,6 @@ class LogsModal(discord.ui.Modal, title="Logging Setup"):
             logs["random"] = int(self.random.value.strip())
         save(data)
         await interaction.response.send_message("Logging channels updated.", ephemeral=True)
-
-class WelcomeModal(discord.ui.Modal, title="Welcome Setup"):
-    channel = discord.ui.TextInput(label="Welcome channel ID", required=True)
-    line = discord.ui.TextInput(label="Line", default="hi there {user}! 💎", required=False)
-    title = discord.ui.TextInput(label="Title", default="welcome to {server}", required=False)
-    body = discord.ui.TextInput(label="Body", style=discord.TextStyle.paragraph, default="you made it.", required=False)
-    image = discord.ui.TextInput(label="Thumbnail URL (optional)", required=False)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        data = load()
-        guild = str(interaction.guild_id)
-        data.setdefault(guild, {})
-        welcome = data[guild].setdefault("welcome", {})
-        welcome["channel_id"] = int(self.channel.value.strip())
-        welcome["line"] = self.line.value.strip() or "hi there {user}! 💎"
-        welcome["title"] = self.title.value.strip() or "welcome to {server}"
-        welcome["body"] = self.body.value.strip() or "you made it."
-        if self.image.value.strip():
-            welcome["image"] = self.image.value.strip()
-        save(data)
-        await interaction.response.send_message("Welcome settings saved.", ephemeral=True)
 
 class VerifyModal(discord.ui.Modal, title="Verification Setup"):
     unverified = discord.ui.TextInput(label="Unverified role ID", required=False)
@@ -231,6 +207,47 @@ class Setup(commands.Cog):
     @app_commands.checks.has_permissions(administrator=True)
     async def setup_cmd(self, interaction: discord.Interaction):
         await interaction.response.send_message("Choose what to set up:", view=SetupView(), ephemeral=True)
+
+    @app_commands.command(name="welcomesetup", description="Set up welcome messages")
+    @app_commands.describe(
+        channel="Channel to send welcomes in",
+        line="Text above the embed (use {user}, {name}, {server}, {count})",
+        title="Embed title",
+        body="Embed description",
+        image="Thumbnail image URL (optional)",
+        banner="Banner image URL (optional)",
+    )
+    @app_commands.checks.has_permissions(administrator=True)
+    async def welcomesetup(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        line: str = "hi there {user}! 💎",
+        title: str = "welcome to {server}",
+        body: str = "you made it.",
+        image: str | None = None,
+        banner: str | None = None,
+    ):
+        data = load()
+        guild = str(interaction.guild_id)
+        data.setdefault(guild, {})
+        welcome = data[guild].setdefault("welcome", {})
+
+        welcome["channel_id"] = channel.id
+        welcome["line"] = line[:200]
+        welcome["title"] = title[:256]
+        welcome["body"] = body[:4000]
+        if image:
+            welcome["image"] = image.strip()
+        if banner:
+            welcome["banner"] = banner.strip()
+
+        save(data)
+
+        await interaction.response.send_message(
+            f"Welcome set for {channel.mention}. Use /welcometest to preview.",
+            ephemeral=True,
+        )
 
 async def setup(bot):
     await bot.add_cog(Setup(bot))
