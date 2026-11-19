@@ -28,65 +28,6 @@ def fill(text: str, member: discord.Member) -> str:
         .replace("{count}", str(member.guild.member_count or ""))
     )
 
-class WelcomeModal(discord.ui.Modal, title="Welcome Setup"):
-    channel = discord.ui.TextInput(
-        label="Welcome channel",
-        placeholder="#general or channel ID",
-        required=True,
-    )
-    line = discord.ui.TextInput(label="Line", default="hi there {user}! 💎", required=False)
-    title = discord.ui.TextInput(label="Title", default="welcome to {server}", required=False)
-    body = discord.ui.TextInput(
-        label="Body",
-        style=discord.TextStyle.paragraph,
-        default="you made it.",
-        required=False,
-    )
-    image = discord.ui.TextInput(label="Thumbnail URL (optional)", required=False)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        raw = self.channel.value.strip()
-
-        # Handle <#123> or plain ID
-        if raw.startswith("<#") and raw.endswith(">"):
-            channel_id_str = raw[2:-1]
-        else:
-            channel_id_str = raw
-
-        try:
-            channel_id = int(channel_id_str)
-        except ValueError:
-            return await interaction.response.send_message(
-                "Use a channel mention (#channel) or the channel ID.",
-                ephemeral=True,
-            )
-
-        channel = interaction.guild.get_channel(channel_id)
-        if not isinstance(channel, discord.TextChannel):
-            return await interaction.response.send_message(
-                "That channel is invalid or not a text channel.",
-                ephemeral=True,
-            )
-
-        data = load()
-        guild = str(interaction.guild_id)
-        data.setdefault(guild, {})
-        welcome = data[guild].setdefault("welcome", {})
-        welcome["channel_id"] = channel_id
-        welcome["line"] = self.line.value.strip() or "hi there {user}! 💎"
-        welcome["title"] = self.title.value.strip() or "welcome to {server}"
-        welcome["body"] = self.body.value.strip() or "you made it."
-        if self.image.value.strip():
-            welcome["image"] = self.image.value.strip()
-        else:
-            welcome.pop("image", None)
-        save(data)
-
-        await interaction.response.send_message(
-            f"Welcome set for {channel.mention}. Use `/welcometest` to preview.",
-            ephemeral=True,
-        )
-
 class Welcome(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
@@ -101,6 +42,9 @@ class Welcome(commands.Cog):
         thumb = (data.get("image") or "").strip()
         if thumb:
             embed.set_thumbnail(url=thumb)
+        banner = (data.get("banner") or "").strip()
+        if banner:
+            embed.set_image(url=banner)
         return line, embed
 
     async def send_welcome(self, member: discord.Member) -> str | None:
@@ -117,10 +61,47 @@ class Welcome(commands.Cog):
             return "Bot can't send in that channel."
         return None
 
-    @app_commands.command(name="welcomesetup", description="Set up welcome messages")
+    @app_commands.command(name="welcomesetup", description="Set the welcome channel and messages")
+    @app_commands.describe(
+        channel="Channel to send welcomes in",
+        line="Message above the embed (use {user})",
+        title="Embed title",
+        body="Embed description",
+        image="Thumbnail URL (optional)",
+        banner="Big image URL (optional)",
+    )
     @app_commands.checks.has_permissions(administrator=True)
-    async def welcomesetup(self, interaction: discord.Interaction):
-        await interaction.response.send_modal(WelcomeModal())
+    async def welcomesetup(
+        self,
+        interaction: discord.Interaction,
+        channel: discord.TextChannel,
+        line: str = "hi there {user}! 💎",
+        title: str = "welcome to {server}",
+        body: str = "you made it.",
+        image: str | None = None,
+        banner: str | None = None,
+    ):
+        data = load()
+        guild = str(interaction.guild_id)
+        data.setdefault(guild, {})
+        welcome = data[guild].setdefault("welcome", {})
+        welcome["channel_id"] = channel.id
+        welcome["line"] = line
+        welcome["title"] = title
+        welcome["body"] = body
+        if image:
+            welcome["image"] = image.strip()
+        else:
+            welcome.pop("image", None)
+        if banner:
+            welcome["banner"] = banner.strip()
+        else:
+            welcome.pop("banner", None)
+        save(data)
+        await interaction.response.send_message(
+            f"Welcome set for {channel.mention}. Use `/welcometest` to preview.",
+            ephemeral=True,
+        )
 
     @app_commands.command(name="welcometest", description="Send a welcome preview")
     @app_commands.checks.has_permissions(administrator=True)
