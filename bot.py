@@ -1,12 +1,20 @@
 import os
+import logging
+import traceback
 from pathlib import Path
 import discord
+from discord import app_commands
 from discord.ext import commands
 from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 GUILD_ID = os.getenv("GUILD_ID")
+
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+)
 
 intents = discord.Intents.default()
 intents.members = True
@@ -34,10 +42,26 @@ async def setup_hook():
             print(f"loaded cog {file.stem}")
         except Exception as e:
             print(f"FAILED cog {file.stem}: {e}")
+            traceback.print_exc()
 
     # Make every command admin-only
     for cmd in bot.tree.walk_commands():
         cmd.default_permissions = discord.Permissions(administrator=True)
+
+@bot.tree.error
+async def on_app_command_error(interaction: discord.Interaction, error: app_commands.AppCommandError):
+    original = getattr(error, "original", error)
+    cmd_name = interaction.command.name if interaction.command else "unknown"
+    print(f"Command error in /{cmd_name}:")
+    traceback.print_exc()
+    try:
+        msg = f"Something broke: {original}"
+        if interaction.response.is_done():
+            await interaction.followup.send(msg, ephemeral=True)
+        else:
+            await interaction.response.send_message(msg, ephemeral=True)
+    except Exception:
+        pass
 
 @bot.event
 async def on_ready():
@@ -55,6 +79,7 @@ async def on_ready():
         print("commands:", ", ".join(sorted(c.name for c in bot.tree.walk_commands())))
     except Exception as e:
         print("slash sync failed:", e)
+        traceback.print_exc()
     print("cogs:", ", ".join(bot.cogs))
 
 if __name__ == "__main__":
