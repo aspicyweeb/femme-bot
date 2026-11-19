@@ -9,7 +9,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
-GUILD_ID = os.getenv("GUILD_ID")
 
 logging.basicConfig(
     level=logging.INFO,
@@ -67,15 +66,8 @@ async def on_app_command_error(interaction: discord.Interaction, error: app_comm
 async def on_ready():
     print(f"logged in as {bot.user} ({bot.user.id})")
     try:
-        if GUILD_ID:
-            guild = discord.Object(id=int(GUILD_ID))
-            bot.tree.clear_commands(guild=guild)
-            bot.tree.copy_global_to(guild=guild)
-            synced = await bot.tree.sync(guild=guild)
-            print(f"synced {len(synced)} commands to guild {GUILD_ID}")
-        else:
-            synced = await bot.tree.sync()
-            print(f"synced {len(synced)} commands globally")
+        synced = await bot.tree.sync()
+        print(f"synced {len(synced)} commands globally")
         print("commands:", ", ".join(sorted(c.name for c in bot.tree.walk_commands())))
     except Exception as e:
         print("slash sync failed:", e)
