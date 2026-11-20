@@ -1,6 +1,3 @@
-Replace your old activity cog with this. Download it or copy the whole file.
-
-```python
 """Activity role cog.
 
 The bot needs all of these or role updates silently do nothing:
@@ -13,19 +10,18 @@ Message Content intent is not required.
 """
 
 import asyncio
-import json
 import logging
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from typing import Optional, Union
 
 import discord
 from discord import app_commands
 from discord.ext import commands, tasks
 
-log = logging.getLogger(__name__)
+import storage
+from storage import DataError
 
-DATA_FILE = Path("/data/config.json")
+log = logging.getLogger(__name__)
 KEEP_DAYS = 14
 WINDOW_DAYS = 7
 HISTORY_CAP = 20000
@@ -38,10 +34,6 @@ TrackChannel = Union[
     discord.StageChannel,
     discord.Thread,
 ]
-
-
-class DataError(Exception):
-    pass
 
 
 def _now() -> datetime:
@@ -179,19 +171,27 @@ def merge_scanned(existing, scanned, window_start: datetime, drop_legacy: bool):
     return buckets, added
 
 
+def _thread_parent_id(channel) -> Optional[int]:
+    # parent_id on a text/voice/forum channel is the CATEGORY, not a thread parent.
+    # Only threads should inherit a watched parent. Treating every parent_id as a
+    # channel made category ids look like tracked channels.
+    if isinstance(channel, discord.Thread):
+        parent_id = getattr(channel, "parent_id", None)
+        return int(parent_id) if parent_id else None
+    return None
+
+
 def is_watched(channel, watched: set) -> bool:
     if getattr(channel, "id", None) in watched:
         return True
-    parent_id = getattr(channel, "parent_id", None)
+    parent_id = _thread_parent_id(channel)
     return parent_id in watched
 
 
 def matched_channel_id(channel, watched: set) -> Optional[int]:
-    # Prefer the channel itself, then a thread's parent. Text channels do not
-    # have parent_id (that's the category), so this won't tag the category.
     if getattr(channel, "id", None) in watched:
         return int(channel.id)
-    parent_id = getattr(channel, "parent_id", None)
+    parent_id = _thread_parent_id(channel)
     if parent_id in watched:
         return int(parent_id)
     return None
@@ -217,29 +217,11 @@ def passes_track(author, track_role_id, guild=None) -> bool:
 
 
 def load() -> dict:
-    if not DATA_FILE.exists():
-        return {}
-    try:
-        data = json.loads(DATA_FILE.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-        raise DataError(
-            f"{DATA_FILE} is corrupt ({exc}). I did not overwrite it."
-        ) from exc
-    except OSError as exc:
-        raise DataError(f"Couldn't read {DATA_FILE}: {exc}") from exc
-    if not isinstance(data, dict):
-        raise DataError(f"{DATA_FILE} is not a JSON object.")
-    return data
+    return storage.load_obj("config.json")
 
 
 def save(data: dict) -> None:
-    try:
-        DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-        tmp = DATA_FILE.with_name(DATA_FILE.name + ".tmp")
-        tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
-        tmp.replace(DATA_FILE)
-    except OSError as exc:
-        raise DataError(f"Couldn't save {DATA_FILE}: {exc}") from exc
+    storage.save("config.json", data)
 
 
 def guild_bucket(data: dict, guild_id: int) -> dict:
@@ -302,7 +284,7 @@ def mentions_from_ids(prefix: str, values) -> str:
 class ActivityRole(commands.Cog):
     def __init__(self, bot: commands.Bot):
         self.bot = bot
-        self._data_lock = asyncio.Lock()
+        self._data_lock = storage.lock
         self._check_lock = asyncio.Lock()
 
     async def cog_load(self):
@@ -310,25 +292,6 @@ class ActivityRole(commands.Cog):
 
     def cog_unload(self):
         self.check_activity.cancel()
-
-    async def cog_app_command_error(self, interaction: discord.Interaction, error: app_commands.AppCommandError):
-        original = getattr(error, "original", error)
-        if isinstance(error, app_commands.MissingPermissions):
-            text = "You need administrator."
-        elif isinstance(error, app_commands.NoPrivateMessage):
-            text = "Use this in a server."
-        elif isinstance(error, app_commands.CheckFailure):
-            text = "You can't use that."
-        else:
-            log.exception("activity command failed", exc_info=original)
-            text = f"Command failed: {original}"
-        try:
-            if interaction.response.is_done():
-                await interaction.followup.send(clip(text), ephemeral=True)
-            else:
-                await interaction.response.send_message(clip(text), ephemeral=True)
-        except discord.HTTPException:
-            log.exception("failed to send activity command error")
 
     def _require_guild(self, interaction: discord.Interaction) -> Optional[discord.Guild]:
         return interaction.guild
@@ -490,7 +453,7 @@ class ActivityRole(commands.Cog):
                     reply = "Run /activitysetup first."
                 else:
                     values = id_list(activity.get(key))
-                    parent_id = getattr(obj, "parent_id", None)
+                    parent_id = _thread_parent_id(obj)
                     if key == "exempt_roles" and not remove and obj.id == activity.get("role_id"):
                         reply = "That's the unlock role. Pick a different exempt role."
                     elif not remove and parent_id in values:
@@ -1080,4 +1043,3 @@ class ActivityRole(commands.Cog):
 
 async def setup(bot: commands.Bot):
     await bot.add_cog(ActivityRole(bot))
-```
