@@ -2,6 +2,8 @@ import discord
 from discord import app_commands
 from discord.ext import commands
 
+SENDABLE = (discord.TextChannel, discord.Thread, discord.VoiceChannel, discord.StageChannel)
+
 
 class Say(commands.Cog):
     def __init__(self, bot: commands.Bot):
@@ -15,20 +17,21 @@ class Say(commands.Cog):
         image2="second image or file",
         image3="third image or file",
     )
+    @app_commands.guild_only()
     @app_commands.checks.has_permissions(administrator=True)
     async def say(
         self,
         interaction: discord.Interaction,
         text: str | None = None,
-        channel: discord.TextChannel | None = None,
+        channel: discord.TextChannel | discord.Thread | None = None,
         image: discord.Attachment | None = None,
         image2: discord.Attachment | None = None,
         image3: discord.Attachment | None = None,
     ):
         await interaction.response.defer(ephemeral=True)
-        channel = channel or interaction.channel
-        if not isinstance(channel, discord.TextChannel):
-            await interaction.followup.send("pick a text channel.", ephemeral=True)
+        target = channel or interaction.channel
+        if not isinstance(target, SENDABLE):
+            await interaction.followup.send("Pick a text channel or thread.", ephemeral=True)
             return
         content = (text or "").strip()
         files = []
@@ -38,20 +41,23 @@ class Say(commands.Cog):
             try:
                 files.append(await att.to_file())
             except Exception:
-                await interaction.followup.send("couldn't read an attachment.", ephemeral=True)
+                await interaction.followup.send("Couldn't read an attachment.", ephemeral=True)
                 return
         if not content and not files:
-            await interaction.followup.send("type text or attach an image.", ephemeral=True)
+            await interaction.followup.send("Type text or attach an image.", ephemeral=True)
             return
         if len(content) > 2000:
-            await interaction.followup.send("max 2000 characters.", ephemeral=True)
+            await interaction.followup.send("Max 2000 characters.", ephemeral=True)
             return
         try:
-            await channel.send(content or None, files=files)
+            await target.send(content or None, files=files)
         except discord.Forbidden:
-            await interaction.followup.send("bot can't send there.", ephemeral=True)
+            await interaction.followup.send("Bot can't send there.", ephemeral=True)
             return
-        await interaction.followup.send("posted.", ephemeral=True)
+        except discord.HTTPException as exc:
+            await interaction.followup.send(f"Discord rejected that: {exc}", ephemeral=True)
+            return
+        await interaction.followup.send("Posted.", ephemeral=True)
 
 
 async def setup(bot: commands.Bot):
