@@ -1,253 +1,253 @@
-import json
-from pathlib import Path
 import discord
 from discord import app_commands
 from discord.ext import commands
 
-DATA_FILE = Path(__file__).resolve().parent.parent / "data" / "config.json"
-SENT_FILE = Path(__file__).resolve().parent.parent / "data" / "sent.json"
+import storage
 
-def load() -> dict:
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if DATA_FILE.exists():
-        return json.loads(DATA_FILE.read_text(encoding="utf-8"))
-    return {}
-
-def save(data: dict) -> None:
-    DATA_FILE.parent.mkdir(parents=True, exist_ok=True)
-    DATA_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
-
-def load_sent() -> dict:
-    SENT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    if SENT_FILE.exists():
-        return json.loads(SENT_FILE.read_text(encoding="utf-8"))
-    return {}
-
-def save_sent(data: dict) -> None:
-    SENT_FILE.parent.mkdir(parents=True, exist_ok=True)
-    SENT_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 def entry(table: dict, key: str) -> dict:
     raw = table.get(key, 0)
     if isinstance(raw, dict):
-        return {"name": raw.get("name") or key, "total": float(raw.get("total") or 0)}
-    return {"name": key, "total": float(raw or 0)}
-
-class SetupSelect(discord.ui.Select):
-    def __init__(self):
-        options = [
-            discord.SelectOption(label="Autorole", value="autorole", description="Role given on join"),
-            discord.SelectOption(label="Logging", value="logs", description="Log channels"),
-            discord.SelectOption(label="Verification", value="verify", description="18+ and creator roles"),
-            discord.SelectOption(label="Personal Server", value="personal", description="Private server only settings"),
-        ]
-        super().__init__(placeholder="What do you want to set up?", options=options)
-
-    async def callback(self, interaction: discord.Interaction):
-        choice = self.values[0]
-        if choice == "autorole":
-            await interaction.response.send_modal(AutoroleModal())
-        elif choice == "logs":
-            await interaction.response.send_modal(LogsModal())
-        elif choice == "verify":
-            await interaction.response.send_modal(VerifyModal())
-        elif choice == "personal":
-            await interaction.response.send_modal(PersonalServerModal())
-
-class SetupView(discord.ui.View):
-    def __init__(self):
-        super().__init__(timeout=120)
-        self.add_item(SetupSelect())
-
-class AutoroleModal(discord.ui.Modal, title="Autorole Setup"):
-    role_id = discord.ui.TextInput(label="Role ID", placeholder="123456789012345678", required=True)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        data = load()
-        guild = str(interaction.guild_id)
-        data.setdefault(guild, {})
-        data[guild]["autorole"] = int(self.role_id.value.strip())
-        save(data)
-        await interaction.response.send_message("Autorole set.", ephemeral=True)
-
-class LogsModal(discord.ui.Modal, title="Logging Setup"):
-    members = discord.ui.TextInput(label="Members log channel ID", placeholder="joins/leaves/roles/bans", required=False)
-    messages = discord.ui.TextInput(label="Messages log channel ID", placeholder="deleted/edited", required=False)
-    random = discord.ui.TextInput(label="Random log channel ID", placeholder="server/channel/role changes", required=False)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        data = load()
-        guild = str(interaction.guild_id)
-        data.setdefault(guild, {})
-        logs = data[guild].setdefault("logs", {})
-        if self.members.value.strip():
-            logs["members"] = int(self.members.value.strip())
-        if self.messages.value.strip():
-            logs["messages"] = int(self.messages.value.strip())
-        if self.random.value.strip():
-            logs["random"] = int(self.random.value.strip())
-        save(data)
-        await interaction.response.send_message("Logging channels updated.", ephemeral=True)
-
-class VerifyModal(discord.ui.Modal, title="Verification Setup"):
-    unverified = discord.ui.TextInput(label="Unverified role ID", required=False)
-    verified18 = discord.ui.TextInput(label="18+ role ID", required=False)
-    creator = discord.ui.TextInput(label="Creator role ID", required=False)
-
-    async def on_submit(self, interaction: discord.Interaction):
-        data = load()
-        guild = str(interaction.guild_id)
-        data.setdefault(guild, {})
-        verify = data[guild].setdefault("verify", {})
-        if self.unverified.value.strip():
-            verify["unverified"] = int(self.unverified.value.strip())
-        if self.verified18.value.strip():
-            verify["18"] = int(self.verified18.value.strip())
-        if self.creator.value.strip():
-            verify["creator"] = int(self.creator.value.strip())
-        save(data)
-        await interaction.response.send_message("Verification roles updated.", ephemeral=True)
-
-class PersonalServerModal(discord.ui.Modal, title="Personal Server"):
-    action = discord.ui.TextInput(
-        label="Action",
-        placeholder="sent / remove / reset / leaderboard",
-        required=True,
-    )
-    user = discord.ui.TextInput(
-        label="User ID (optional)",
-        placeholder="123456789012345678",
-        required=False,
-    )
-    name = discord.ui.TextInput(
-        label="Name (if not on Discord)",
-        placeholder="their name",
-        required=False,
-    )
-    amount = discord.ui.TextInput(
-        label="Amount (for sent/remove)",
-        placeholder="25.00",
-        required=False,
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        act = self.action.value.strip().lower()
-        guild = str(interaction.guild_id)
-        data = load_sent()
-        table = data.setdefault(guild, {})
-
-        if act == "leaderboard":
-            if not table:
-                return await interaction.response.send_message("empty.", ephemeral=True)
-            rows = []
-            for key, raw in table.items():
-                item = entry(table, key)
-                rows.append((key, item["name"], item["total"]))
-            rows.sort(key=lambda r: r[2], reverse=True)
-            lines = []
-            for i, (key, saved_name, total) in enumerate(rows[:25], start=1):
-                if key.isdigit():
-                    shown = f"<@{key}>"
-                else:
-                    shown = saved_name
-                lines.append(f"**{i}.** {shown} — ${total:.2f}")
-            grand = sum(r[2] for r in rows)
-            await interaction.response.send_message(("\n".join(lines) + f"\n\ntotal ${grand:.2f}")[:1900], ephemeral=True)
-            return
-
-        if act == "reset":
-            data[guild] = {}
-            save_sent(data)
-            return await interaction.response.send_message("leaderboard wiped.", ephemeral=True)
-
-        if act not in ("sent", "remove"):
-            return await interaction.response.send_message("Use: sent / remove / reset / leaderboard", ephemeral=True)
-
-        uid = self.user.value.strip()
-        name_val = self.name.value.strip()
-        amt_raw = self.amount.value.strip()
-
-        if not uid and not name_val:
-            return await interaction.response.send_message("Need a user ID or a name.", ephemeral=True)
-        if not amt_raw:
-            return await interaction.response.send_message("Need an amount.", ephemeral=True)
-
         try:
-            amount = float(amt_raw)
-        except ValueError:
-            return await interaction.response.send_message("Amount must be a number.", ephemeral=True)
+            total = float(raw.get("total") or 0)
+        except (TypeError, ValueError):
+            total = 0.0
+        return {"name": str(raw.get("name") or key), "total": total}
+    try:
+        total = float(raw or 0)
+    except (TypeError, ValueError):
+        total = 0.0
+    return {"name": key, "total": total}
 
-        key = uid if uid else f"name:{name_val.lower()}"
-        label = f"<@{uid}>" if uid else name_val
-        display_name = name_val if name_val else uid
 
-        current = entry(table, key)
-        if act == "sent":
-            total = round(current["total"] + amount, 2)
-            table[key] = {"name": display_name, "total": total}
-            msg = f"+${amount:.2f} {label} · total ${total:.2f}"
-        else:  # remove
-            total = round(current["total"] - abs(amount), 2)
-            if total <= 0:
-                table.pop(key, None)
-                total = 0
-            else:
-                table[key] = {"name": current["name"], "total": total}
-            msg = f"-${abs(amount):.2f} {label} · total ${total:.2f}"
+def _person(member: discord.Member | None, name: str | None) -> tuple[str, str, str]:
+    if member is not None:
+        label = member.mention
+        key = str(member.id)
+        display = member.display_name
+        if name and name.strip():
+            display = name.strip()[:80]
+        return key, label, display
+    if name and name.strip():
+        clean = name.strip()[:80]
+        return f"name:{clean.lower()}", clean, clean
+    raise ValueError("Pick a member, or type a name if they are not in the server.")
 
-        data[guild] = table
-        save_sent(data)
-        await interaction.response.send_message(msg, ephemeral=True)
 
 class Setup(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
 
-    @app_commands.command(name="setup", description="Configure bot settings")
+    @app_commands.command(name="autorole", description="Role given when someone joins")
+    @app_commands.guild_only()
     @app_commands.checks.has_permissions(administrator=True)
-    async def setup_cmd(self, interaction: discord.Interaction):
-        await interaction.response.send_message("Choose what to set up:", view=SetupView(), ephemeral=True)
+    @app_commands.describe(role="Role to give new members")
+    async def autorole(self, interaction: discord.Interaction, role: discord.Role):
+        if interaction.guild is None:
+            await interaction.response.send_message("Use this in the server.", ephemeral=True)
+            return
+        if role.is_default() or role.managed:
+            await interaction.response.send_message("That role can't be assigned.", ephemeral=True)
+            return
+        async with storage.lock:
+            data = storage.load_obj("config.json")
+            guild = str(interaction.guild_id)
+            data.setdefault(guild, {})
+            data[guild]["autorole"] = role.id
+            storage.save("config.json", data)
+        note = ""
+        me = interaction.guild.me
+        if me is not None and role >= me.top_role:
+            note = " Move my role above it or I can't assign it."
+        await interaction.response.send_message(f"New members get {role.mention}.{note}", ephemeral=True)
 
-    @app_commands.command(name="welcomesetup", description="Set up welcome messages")
-    @app_commands.describe(
-        channel="Channel to send welcomes in",
-        line="Text above the embed (use {user}, {name}, {server}, {count})",
-        title="Embed title",
-        body="Embed description",
-        image="Thumbnail image URL (optional)",
-        banner="Banner image URL (optional)",
-    )
+    @app_commands.command(name="setlogs", description="Channels for joins, deleted messages, and server changes")
+    @app_commands.guild_only()
     @app_commands.checks.has_permissions(administrator=True)
-    async def welcomesetup(
+    @app_commands.describe(
+        members="Joins, leaves, roles, bans",
+        messages="Deleted and edited messages",
+        events="Role, channel, and server changes",
+    )
+    async def setlogs(
         self,
         interaction: discord.Interaction,
-        channel: discord.TextChannel,
-        line: str = "hi there {user}! 💎",
-        title: str = "welcome to {server}",
-        body: str = "you made it.",
-        image: str | None = None,
-        banner: str | None = None,
+        members: discord.TextChannel | None = None,
+        messages: discord.TextChannel | None = None,
+        events: discord.TextChannel | None = None,
     ):
-        data = load()
-        guild = str(interaction.guild_id)
-        data.setdefault(guild, {})
-        welcome = data[guild].setdefault("welcome", {})
+        if interaction.guild_id is None:
+            await interaction.response.send_message("Use this in the server.", ephemeral=True)
+            return
+        updates: dict[str, int] = {}
+        shown: list[str] = []
+        if members is not None:
+            updates["members"] = members.id
+            shown.append(f"members {members.mention}")
+        if messages is not None:
+            updates["messages"] = messages.id
+            shown.append(f"messages {messages.mention}")
+        if events is not None:
+            updates["random"] = events.id
+            shown.append(f"events {events.mention}")
+        if not updates:
+            await interaction.response.send_message("Pick at least one channel.", ephemeral=True)
+            return
+        async with storage.lock:
+            data = storage.load_obj("config.json")
+            guild = str(interaction.guild_id)
+            data.setdefault(guild, {})
+            logs = data[guild].setdefault("logs", {})
+            logs.update(updates)
+            storage.save("config.json", data)
+        await interaction.response.send_message("Logging set: " + ", ".join(shown), ephemeral=True)
 
-        welcome["channel_id"] = channel.id
-        welcome["line"] = line[:200]
-        welcome["title"] = title[:256]
-        welcome["body"] = body[:4000]
-        if image:
-            welcome["image"] = image.strip()
-        if banner:
-            welcome["banner"] = banner.strip()
+    @app_commands.command(name="setverify", description="Roles for unverified, 18+, and creator")
+    @app_commands.guild_only()
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(
+        unverified="Role people have before they verify",
+        verified="18+ role",
+        creator="Creator role",
+    )
+    async def setverify(
+        self,
+        interaction: discord.Interaction,
+        unverified: discord.Role | None = None,
+        verified: discord.Role | None = None,
+        creator: discord.Role | None = None,
+    ):
+        if interaction.guild_id is None:
+            await interaction.response.send_message("Use this in the server.", ephemeral=True)
+            return
+        updates: dict[str, int] = {}
+        shown: list[str] = []
+        if unverified is not None:
+            updates["unverified"] = unverified.id
+            shown.append(f"unverified {unverified.mention}")
+        if verified is not None:
+            updates["18"] = verified.id
+            shown.append(f"18+ {verified.mention}")
+        if creator is not None:
+            updates["creator"] = creator.id
+            shown.append(f"creator {creator.mention}")
+        if not updates:
+            await interaction.response.send_message("Pick at least one role.", ephemeral=True)
+            return
+        async with storage.lock:
+            data = storage.load_obj("config.json")
+            guild = str(interaction.guild_id)
+            data.setdefault(guild, {})
+            verify = data[guild].setdefault("verify", {})
+            verify.update(updates)
+            storage.save("config.json", data)
+        await interaction.response.send_message("Verification set: " + ", ".join(shown), ephemeral=True)
 
-        save(data)
+    async def _change(
+        self,
+        interaction: discord.Interaction,
+        action: str,
+        amount: float,
+        member: discord.Member | None,
+        name: str | None,
+    ) -> None:
+        if interaction.guild_id is None:
+            await interaction.response.send_message("Use this in the server.", ephemeral=True)
+            return
+        try:
+            key, label, display = _person(member, name)
+            amount = round(float(amount), 2)
+            if amount <= 0:
+                raise ValueError("Amount has to be more than 0.")
+            async with storage.lock:
+                data = storage.load_obj("sent.json")
+                guild = str(interaction.guild_id)
+                table = data.setdefault(guild, {})
+                if not isinstance(table, dict):
+                    table = {}
+                current = entry(table, key)
+                if action == "sent":
+                    total = round(current["total"] + amount, 2)
+                    table[key] = {"name": display, "total": total}
+                    msg = f"+${amount:.2f} {label} · total ${total:.2f}"
+                else:
+                    total = round(current["total"] - amount, 2)
+                    if total <= 0:
+                        table.pop(key, None)
+                        total = 0
+                    else:
+                        table[key] = {"name": current["name"] or display, "total": total}
+                    msg = f"-${amount:.2f} {label} · total ${total:.2f}"
+                data[guild] = table
+                storage.save("sent.json", data)
+        except (ValueError, storage.DataError) as exc:
+            await interaction.response.send_message(str(exc), ephemeral=True)
+            return
+        await interaction.response.send_message(msg, ephemeral=True)
 
-        await interaction.response.send_message(
-            f"Welcome set for {channel.mention}. Use /welcometest to preview.",
-            ephemeral=True,
-        )
+    @app_commands.command(name="sent", description="Add to someone's sent total")
+    @app_commands.guild_only()
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(amount="Dollars", member="Someone in the server", name="Name if they are not in the server")
+    async def sent(
+        self,
+        interaction: discord.Interaction,
+        amount: app_commands.Range[float, 0.01, 1000000000.0],
+        member: discord.Member | None = None,
+        name: str | None = None,
+    ):
+        await self._change(interaction, "sent", amount, member, name)
+
+    @app_commands.command(name="sentremove", description="Subtract from someone's sent total")
+    @app_commands.guild_only()
+    @app_commands.checks.has_permissions(administrator=True)
+    @app_commands.describe(amount="Dollars", member="Someone in the server", name="Name if they are not in the server")
+    async def sentremove(
+        self,
+        interaction: discord.Interaction,
+        amount: app_commands.Range[float, 0.01, 1000000000.0],
+        member: discord.Member | None = None,
+        name: str | None = None,
+    ):
+        await self._change(interaction, "remove", amount, member, name)
+
+    @app_commands.command(name="sentreset", description="Wipe the sent leaderboard")
+    @app_commands.guild_only()
+    @app_commands.checks.has_permissions(administrator=True)
+    async def sentreset(self, interaction: discord.Interaction):
+        if interaction.guild_id is None:
+            await interaction.response.send_message("Use this in the server.", ephemeral=True)
+            return
+        async with storage.lock:
+            data = storage.load_obj("sent.json")
+            data[str(interaction.guild_id)] = {}
+            storage.save("sent.json", data)
+        await interaction.response.send_message("Leaderboard wiped.", ephemeral=True)
+
+    @app_commands.command(name="leaderboard", description="Sent totals")
+    @app_commands.guild_only()
+    @app_commands.checks.has_permissions(administrator=True)
+    async def leaderboard(self, interaction: discord.Interaction):
+        if interaction.guild_id is None:
+            await interaction.response.send_message("Use this in the server.", ephemeral=True)
+            return
+        data = storage.load_obj("sent.json")
+        table = data.get(str(interaction.guild_id), {})
+        if not isinstance(table, dict) or not table:
+            await interaction.response.send_message("Empty.", ephemeral=True)
+            return
+        rows = []
+        for key in table:
+            item = entry(table, key)
+            rows.append((key, item["name"], item["total"]))
+        rows.sort(key=lambda row: row[2], reverse=True)
+        lines = []
+        for i, (key, saved_name, total) in enumerate(rows[:25], start=1):
+            shown = f"<@{key}>" if str(key).isdigit() else saved_name
+            lines.append(f"**{i}.** {shown} — ${total:.2f}")
+        grand = sum(row[2] for row in rows)
+        await interaction.response.send_message("\n".join(lines) + f"\n\ntotal ${grand:.2f}", ephemeral=True)
+
 
 async def setup(bot):
     await bot.add_cog(Setup(bot))
