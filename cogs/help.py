@@ -8,6 +8,7 @@ class Help(commands.Cog):
         self.bot = bot
 
     @app_commands.command(name="commands", description="list every command this bot has right now")
+    @app_commands.guild_only()
     @app_commands.checks.has_permissions(administrator=True)
     async def commands_list(self, interaction: discord.Interaction):
         lines = []
