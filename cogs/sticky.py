@@ -16,6 +16,8 @@ class Sticky(commands.Cog):
         self.bot = bot
         self.pending: dict[int, asyncio.Task] = {}
         self.generation: dict[int, int] = {}
+        self.posting: set[int] = set()
+        self.mine: set[int] = set()
 
     def _bump(self, channel_id: int) -> int:
         gen = self.generation.get(channel_id, 0) + 1
@@ -52,13 +54,17 @@ class Sticky(commands.Cog):
             except (discord.NotFound, discord.Forbidden, discord.HTTPException, TypeError, ValueError):
                 pass
         try:
+            self.posting.add(channel.id)
             msg = await channel.send(text)
+            self.mine.add(msg.id)
         except discord.Forbidden:
             await interaction.followup.send("Bot can't send in that channel.", ephemeral=True)
             return
         except discord.HTTPException as exc:
             await interaction.followup.send(f"Discord rejected that: {exc}", ephemeral=True)
             return
+        finally:
+            self.posting.discard(channel.id)
         try:
             async with storage.lock:
                 data = storage.load_obj("stickies.json")
@@ -116,7 +122,12 @@ class Sticky(commands.Cog):
                     pass
             if self.generation.get(channel_id) != gen:
                 return
-            new = await channel.send(text)
+            self.posting.add(channel_id)
+            try:
+                new = await channel.send(text)
+                self.mine.add(new.id)
+            finally:
+                self.posting.discard(channel_id)
             if self.generation.get(channel_id) != gen:
                 try:
                     await new.delete()
@@ -154,11 +165,13 @@ class Sticky(commands.Cog):
         entry = data.get(str(message.channel.id))
         if not isinstance(entry, dict):
             return
-        if message.id == entry.get("message_id"):
+        if message.id == entry.get("message_id") or message.id in self.mine:
             return
-        # The sticky we just reposted matches this text. Anything else the bot
-        # sends (like /say) should still push the sticky back to the bottom.
-        if message.author.id == self.bot.user.id and message.content == entry.get("text"):
+        if message.channel.id in self.posting and message.author.id == self.bot.user.id:
+            return
+        stored = entry.get("text") or ""
+        if message.author.id == self.bot.user.id and message.content.strip() == stored.strip():
+            self.mine.add(message.id)
             return
         gen = self._bump(message.channel.id)
         self.pending[message.channel.id] = asyncio.create_task(self.refresh(message.channel, gen))
